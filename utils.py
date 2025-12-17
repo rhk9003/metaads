@@ -1,3 +1,8 @@
+
+utils.py
+
+
+
 import os
 import datetime
 import json
@@ -283,4 +288,42 @@ class GoogleServices:
             }
         ]
         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute()
+        
+        # --- Attempt to insert image ---
+        image_url = ad_data.get('image_url')
+        if image_url:
+            try:
+                # We need to refresh the index because we just inserted text
+                doc = self.docs_service.documents().get(documentId=doc_id).execute()
+                content = doc.get('body').get('content')
+                last_index = content[-1]['endIndex'] - 1 
+                
+                image_requests = [
+                    {
+                        'insertInlineImage': {
+                            'uri': image_url,
+                            'location': {
+                                'index': last_index
+                            },
+                            'objectSize': {
+                                'width': {
+                                    'magnitude': 400,
+                                    'unit': 'PT'
+                                }
+                            }
+                        }
+                    },
+                     {
+                        'insertText': {
+                             'location': {
+                                'index': last_index + 1 # Insert newline after image (conceptually)
+                            },
+                            'text': "\n"
+                        }
+                    }
+                ]
+                self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
+                print(f"Image inserted successfully: {image_url}")
+            except Exception as e:
+                print(f"Failed to insert image (URL might be invalid or private): {e}")
         return block_name
