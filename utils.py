@@ -1,4 +1,5 @@
 import os
+import re
 import datetime
 import json
 import gspread
@@ -323,6 +324,49 @@ class GoogleServices:
             self.share_file(new_doc_id, customer_email)
             self.share_file(new_doc_id, ADMIN_EMAIL)
             return new_doc_id
+    def _process_image_url(self, url):
+        """
+        Analyzes the image URL.
+        If it's a Google Drive link, it attempts to:
+        1. Extract File ID.
+        2. Make the file 'Anyone with link' accessible (to allow Docs API to fetch it).
+        3. Return the 'webContentLink' (Direct Download Link).
+        """
+        if not url:
+            return None
+        # Regex to catch common Drive ID patterns
+        # https://drive.google.com/file/d/Vk8.../view
+        # https://drive.google.com/open?id=Vk8...
+        drive_pattern = r"(?:https?://)?(?:drive|docs)\.google\.com/(?:file/d/|open\?id=|uc\?id=)([-w]+)"
+        match = re.search(drive_pattern, url)
+        
+        if match:
+            file_id = match.group(1)
+            print(f"Debug: Detected Drive Image ID: {file_id}")
+            try:
+                # 1. Make file public (reader) - Essential for Docs API to 'see' it
+                perm_body = {'role': 'reader', 'type': 'anyone'}
+                self.drive_service.permissions().create(
+                    fileId=file_id,
+                    body=perm_body
+                ).execute()
+                print("Debug: Set permission to 'anyone' for image.")
+                # 2. Get direct download link
+                file_info = self.drive_service.files().get(
+                    fileId=file_id,
+                    fields='webContentLink, webViewLink, mimeType'
+                ).execute()
+                
+                # webContentLink is usually the direct one
+                direct_link = file_info.get('webContentLink')
+                print(f"Debug: Converted to Direct Link: {direct_link}")
+                return direct_link
+            except Exception as e:
+                print(f"Warning: Failed to process Drive link automatically: {e}")
+                st.warning(f"⚠️ 嘗試自動轉換 Drive 連結失敗 (可能權限不足): {e}")
+                return url # Fallback to original
+        
+        return url
     def append_ad_data_to_doc(self, doc_id, ad_data):
         """
         Appends the formatted ad data to the Google Doc.
@@ -379,8 +423,11 @@ class GoogleServices:
         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute()
         
         # --- Attempt to insert image ---
-        image_url = ad_data.get('image_url')
-        if image_url:
+        raw_image_url = ad_data.get('image_url')
+        if raw_image_url:
+            # PROCESS URL (Advanced Dev Logic)
+            image_url = self._process_image_url(raw_image_url)
+            
             try:
                 # We need to refresh the index because we just inserted text
                 doc = self.docs_service.documents().get(documentId=doc_id).execute()
@@ -414,5 +461,7 @@ class GoogleServices:
                 self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
                 print(f"Image inserted successfully: {image_url}")
             except Exception as e:
-                print(f"Failed to insert image (URL might be invalid or private): {e}")
+                error_msg = f"圖片插入失敗 (這通常是因為網址不是『公開直連』的圖片連結，例如 Google Drive 預覽連結是無法直接用的): {e}"
+                print(error_msg)
+                st.warning(f"⚠️ {error_msg}")
         return block_name
