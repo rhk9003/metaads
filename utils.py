@@ -5,33 +5,33 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-
 import streamlit as st
-
 # Constants
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive',
     'https://www.googleapis.com/auth/documents'
 ]
-
 # You might want to move these to environment variables or a config file
 MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/1zXHavJqhOBq1-m_VR7sxMkeOHdXoD9EmQCEM1Nl816I/edit?usp=sharing"
 ADMIN_EMAIL = "rhk9903@gmail.com"
-
 # Column Indices (0-based) - Adjust these if the sheet structure changes
 # Assuming simple structure for now, but in a real app, searching by header name is better.
 # Let's try to find headers dynamically in the code.
-
 class GoogleServices:
     def __init__(self, service_account_file='gen-lang-client-0057298651-12025f130563.json'):
         self.creds = None
         
-        # Priority 1: Check Streamlit Secrets
+        # Priority 1: Check Streamlit Secrets (Nested Section)
         # We look for a section named "gcp_service_account" or similar in secrets.toml
         if "gcp_service_account" in st.secrets:
             # st.secrets returns a primitive dict-like object, Credentials checks for type dict
             service_account_info = dict(st.secrets["gcp_service_account"])
+            self.creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+        # Priority 1.5: Check Streamlit Secrets (Root Level)
+        # In case user pasted the keys directly without [gcp_service_account] header
+        elif "private_key" in st.secrets:
+            service_account_info = dict(st.secrets)
             self.creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
         
         # Priority 2: Check Local File
@@ -54,11 +54,9 @@ class GoogleServices:
             
             if not self.creds:
                 raise FileNotFoundError(f"Could not find valid credentials in st.secrets or local file '{service_account_file}'.")
-
         self.gc = gspread.authorize(self.creds)
         self.drive_service = build('drive', 'v3', credentials=self.creds)
         self.docs_service = build('docs', 'v1', credentials=self.creds)
-
     def get_case_id_by_email(self, email):
         """
         Scans the master sheet for the email and returns the associated Case ID.
@@ -67,7 +65,6 @@ class GoogleServices:
             # Open the sheet by URL
             sh = self.gc.open_by_url(MASTER_SHEET_URL)
             worksheet = sh.get_worksheet(0) # Assuming data is in the first sheet
-
             # Get all records to find headers
             # records = worksheet.get_all_records() # usage dependent on headers
             
@@ -96,10 +93,8 @@ class GoogleServices:
                     # For now, let's look for specific columns if we can't find them dynamically.
                     print("Could not likely identify columns by header. Checking raw data.")
                     pass
-
             except Exception as e:
                 print(f"Header parsing error: {e}")
-
             # Simplest approach: Use gspread's find method if the email is unique
             # precise matching
             cell = worksheet.find(email)
@@ -133,11 +128,9 @@ class GoogleServices:
                                 return str(v)
             
             return None
-
         except Exception as e:
             print(f"Error reading sheet: {e}")
             return None
-
     def find_file_in_drive(self, name):
         """Finds a file by name in Drive, returns ID if found."""
         query = f"name = '{name}' and mimeType = 'application/vnd.google-apps.document' and trashed = false"
@@ -146,7 +139,6 @@ class GoogleServices:
         if files:
             return files[0]['id']
         return None
-
     def create_doc(self, title):
         """Creates a new Google Doc."""
         doc_metadata = {
@@ -155,13 +147,11 @@ class GoogleServices:
         }
         doc = self.drive_service.files().create(body=doc_metadata, fields='id').execute()
         return doc.get('id')
-
     def share_file(self, file_id, email, role='writer'):
         """Shares a file with a specific email."""
         def callback(request_id, response, exception):
             if exception:
                 print(f"Error sharing with {email}: {exception}")
-
         batch = self.drive_service.new_batch_http_request(callback=callback)
         user_permission = {
             'type': 'user',
@@ -174,7 +164,6 @@ class GoogleServices:
                 fields='id',
         ))
         batch.execute()
-
     def ensure_doc_exists_and_share(self, case_id, customer_email):
         """
         Checks if 'CASEID_meta廣告上刊文件' exists.
@@ -183,7 +172,6 @@ class GoogleServices:
         """
         doc_name = f"{case_id}_meta廣告上刊文件"
         existing_doc_id = self.find_file_in_drive(doc_name)
-
         if existing_doc_id:
             print(f"Document '{doc_name}' already exists. ID: {existing_doc_id}")
             # Ensure permissions are set (idempotent-ish, or just skip)
@@ -200,7 +188,6 @@ class GoogleServices:
             self.share_file(new_doc_id, customer_email)
             self.share_file(new_doc_id, ADMIN_EMAIL)
             return new_doc_id
-
     def append_ad_data_to_doc(self, doc_id, ad_data):
         """
         Appends the formatted ad data to the Google Doc.
@@ -211,7 +198,6 @@ class GoogleServices:
         
         # Current time for the file update logic if needed, but we write to doc body
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
         # Construct the text content
         text_content = (
             f"\n\n--------------------------------------------------\n"
@@ -225,7 +211,6 @@ class GoogleServices:
             f"廣告到達網址: {ad_data.get('landing_url')}\n"
             f"--------------------------------------------------\n"
         )
-
         requests = [
             {
                 'insertText': {
@@ -246,7 +231,6 @@ class GoogleServices:
         doc = self.docs_service.documents().get(documentId=doc_id).execute()
         content = doc.get('body').get('content')
         last_index = content[-1]['endIndex'] - 1 
-
         requests = [
              {
                 'insertText': {
@@ -257,6 +241,5 @@ class GoogleServices:
                 }
             }
         ]
-
         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute()
         return block_name
