@@ -220,8 +220,11 @@ class GoogleServices:
         4. Create Doc INSIDE 'CustomerName' folder.
         """
         doc_name = f"{case_id}_meta廣告上刊文件"
+        st.sidebar.info(f"Debug: Checking doc '{doc_name}'")
+        
         existing_doc_id = self.find_file_in_drive(doc_name)
         if existing_doc_id:
+            st.sidebar.success(f"Debug: Doc found ({existing_doc_id})")
             print(f"Document '{doc_name}' already exists. ID: {existing_doc_id}")
             try:
                 self.share_file(existing_doc_id, customer_email)
@@ -231,11 +234,18 @@ class GoogleServices:
             return existing_doc_id
         else:
             print(f"Creating new document: {doc_name}")
+            st.sidebar.info("Debug: Doc not found, creating...")
             
             # 0. Find Root Folder (CRITICAL FIX for 0 Quota)
+            st.sidebar.text("Debug: Searching for 'Meta_Ads_System'...")
             root_id = self.get_root_folder_id()
+            
             if not root_id:
+                st.sidebar.error("❌ Critical: 'Meta_Ads_System' folder NOT FOUND.")
+                st.sidebar.warning("請確保您已在 Google Drive 建立 'Meta_Ads_System' 資料夾並分享給機器人帳號！")
                 raise FileNotFoundError("找不到根目錄 'Meta_Ads_System'。請在您的 Google Drive 建立此資料夾並分享給 Service Account。")
+            else:
+                st.sidebar.success(f"✅ Found Root Folder: {root_id}")
             # 1. Determine Customer Folder Name
             if "_" in str(case_id):
                 folder_name = str(case_id).split("_")[0]
@@ -243,17 +253,28 @@ class GoogleServices:
                 folder_name = str(case_id)
             
             # 2. Check/Create Customer Folder INSIDE Root
-            # Note: find_folder_in_drive searches globally, which is risky if duplicates exist.
-            # Ideally we search inside root, but for now global search might find the one we just made.
-            # Let's try to create it inside root if we don't find it.
+            st.sidebar.text(f"Debug: Searching/Creating Subfolder '{folder_name}'...")
             folder_id = self.find_folder_in_drive(folder_name)
             
             if not folder_id:
-                print(f"Creating new folder: {folder_name} inside {root_id}")
-                folder_id = self.create_folder(folder_name, parent_id=root_id)
+                st.sidebar.text(f"Debug: Creating '{folder_name}' inside Root...")
+                try:
+                    folder_id = self.create_folder(folder_name, parent_id=root_id)
+                    st.sidebar.success(f"✅ Created Subfolder: {folder_id}")
+                except Exception as e:
+                     st.sidebar.error(f"❌ Failed to create subfolder: {e}")
+                     raise e
+            else:
+                st.sidebar.info(f"Debug: Found existing subfolder {folder_id}")
             
             # 3. Create Doc inside Customer Folder
-            new_doc_id = self.create_doc(doc_name, folder_id=folder_id)
+            st.sidebar.text("Debug: Creating Document...")
+            try:
+                new_doc_id = self.create_doc(doc_name, folder_id=folder_id)
+                st.sidebar.success(f"✅ Created Document: {new_doc_id}")
+            except Exception as e:
+                st.sidebar.error(f"❌ Failed to create document: {e}")
+                raise e
             
             self.share_file(new_doc_id, customer_email)
             self.share_file(new_doc_id, ADMIN_EMAIL)
