@@ -23,13 +23,19 @@ class GoogleServices:
         self.creds = None
         
         # Priority 1: Check Streamlit Secrets (Nested Section)
-        # We look for a section named "gcp_service_account" or similar in secrets.toml
         if "gcp_service_account" in st.secrets:
-            # st.secrets returns a primitive dict-like object, Credentials checks for type dict
             service_account_info = dict(st.secrets["gcp_service_account"])
             self.creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
-        # Priority 1.5: Check Streamlit Secrets (Root Level)
-        # In case user pasted the keys directly without [gcp_service_account] header
+        
+        # Priority 1.5: Check Streamlit Secrets (Raw JSON String)
+        # This is easier for users: just paste the whole JSON into a string variable
+        elif "gcp_json" in st.secrets:
+            try:
+                service_account_info = json.loads(st.secrets["gcp_json"])
+                self.creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in secrets 'gcp_json': {e}")
+        # Priority 1.8: Check Streamlit Secrets (Root Level Fallback)
         elif "private_key" in st.secrets:
             service_account_info = dict(st.secrets)
             self.creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
