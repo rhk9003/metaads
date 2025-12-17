@@ -164,12 +164,22 @@ class GoogleServices:
         if files:
             return files[0]['id']
         return None
-    def create_folder(self, name):
-        """Creates a new folder."""
+    # Function to find the Root Folder (Shared from User)
+    def get_root_folder_id(self):
+        # We look for a specific folder that the user MUST satisfy
+        # This bypasses the 0-byte limit of the service account itself
+        FOLDER_NAME = "Meta_Ads_System" # User must create this
+        folder_id = self.find_folder_in_drive(FOLDER_NAME)
+        return folder_id
+    def create_folder(self, name, parent_id=None):
+        """Creates a new folder, optionally inside a parent."""
         file_metadata = {
             'name': name,
             'mimeType': 'application/vnd.google-apps.folder'
         }
+        if parent_id:
+            file_metadata['parents'] = [parent_id]
+            
         file = self.drive_service.files().create(body=file_metadata, fields='id').execute()
         return file.get('id')
     def create_doc(self, title, folder_id=None):
@@ -203,15 +213,16 @@ class GoogleServices:
     def ensure_doc_exists_and_share(self, case_id, customer_email):
         """
         Checks if 'CASEID_meta廣告上刊文件' exists.
-        If yes, returns ID.
-        If no, creates it in the customer folder, shares with customer and admin.
+        Strategy:
+        1. Find 'Meta_Ads_System' folder (Shared from User).
+        2. If not found -> RAISE ERROR (User must create it).
+        3. Find/Create 'CustomerName' folder INSIDE 'Meta_Ads_System'.
+        4. Create Doc INSIDE 'CustomerName' folder.
         """
         doc_name = f"{case_id}_meta廣告上刊文件"
         existing_doc_id = self.find_file_in_drive(doc_name)
         if existing_doc_id:
             print(f"Document '{doc_name}' already exists. ID: {existing_doc_id}")
-            # Ensure permissions are set (idempotent-ish, or just skip)
-            # We can re-share just in case
             try:
                 self.share_file(existing_doc_id, customer_email)
                 self.share_file(existing_doc_id, ADMIN_EMAIL)
@@ -221,26 +232,27 @@ class GoogleServices:
         else:
             print(f"Creating new document: {doc_name}")
             
+            # 0. Find Root Folder (CRITICAL FIX for 0 Quota)
+            root_id = self.get_root_folder_id()
+            if not root_id:
+                raise FileNotFoundError("找不到根目錄 'Meta_Ads_System'。請在您的 Google Drive 建立此資料夾並分享給 Service Account。")
             # 1. Determine Customer Folder Name
-            # Split case_id by '_' to get the prefix. e.g. "Nike_Seasonal" -> "Nike"
             if "_" in str(case_id):
                 folder_name = str(case_id).split("_")[0]
             else:
                 folder_name = str(case_id)
             
-            # 2. Check/Create Folder
+            # 2. Check/Create Customer Folder INSIDE Root
+            # Note: find_folder_in_drive searches globally, which is risky if duplicates exist.
+            # Ideally we search inside root, but for now global search might find the one we just made.
+            # Let's try to create it inside root if we don't find it.
             folder_id = self.find_folder_in_drive(folder_name)
-            if not folder_id:
-                print(f"Creating new folder: {folder_name}")
-                folder_id = self.create_folder(folder_name)
-                # Optional: Share folder? The user didn't explicitly ask to share the folder, 
-                # but usually it's good practice. However, adhering strictly to "new doc stored in folder".
-                # If we share the folder, they inherit access to everything inside.
-                # Let's share the folder too for convenience? Or stick to file sharing.
-                # User request: "stored in client name folder". 
-                # I will create the doc INSIDE this folder.
             
-            # 3. Create Doc inside Folder
+            if not folder_id:
+                print(f"Creating new folder: {folder_name} inside {root_id}")
+                folder_id = self.create_folder(folder_name, parent_id=root_id)
+            
+            # 3. Create Doc inside Customer Folder
             new_doc_id = self.create_doc(doc_name, folder_id=folder_id)
             
             self.share_file(new_doc_id, customer_email)
