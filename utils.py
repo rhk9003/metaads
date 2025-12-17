@@ -150,8 +150,14 @@ class GoogleServices:
             return None
     def find_file_in_drive(self, name):
         """Finds a file by name in Drive, returns ID if found."""
-        query = f"name = '{name}' and mimeType = 'application/vnd.google-apps.document' and trashed = false"
-        results = self.drive_service.files().list(q=query, fields="files(id, name)").execute()
+        query = f"name = '{name}' and mimeType != 'application/vnd.google-apps.folder' and trashed = false"
+        # Added supportsAllDrives=True to find files in Shared Drives
+        results = self.drive_service.files().list(
+            q=query, 
+            fields="files(id, name)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
         files = results.get('files', [])
         if files:
             return files[0]['id']
@@ -159,7 +165,13 @@ class GoogleServices:
     def find_folder_in_drive(self, name):
         """Finds a folder by name in Drive, returns ID if found."""
         query = f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-        results = self.drive_service.files().list(q=query, fields="files(id, name)").execute()
+        # Added supportsAllDrives=True to find folders in Shared Drives
+        results = self.drive_service.files().list(
+            q=query, 
+            fields="files(id, name)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
         files = results.get('files', [])
         if files:
             return files[0]['id']
@@ -180,7 +192,12 @@ class GoogleServices:
         if parent_id:
             file_metadata['parents'] = [parent_id]
             
-        file = self.drive_service.files().create(body=file_metadata, fields='id').execute()
+        # Added supportsAllDrives=True
+        file = self.drive_service.files().create(
+            body=file_metadata, 
+            fields='id',
+            supportsAllDrives=True
+        ).execute()
         return file.get('id')
     def create_doc(self, title, folder_id=None):
         """Creates a new Google Doc, optionally inside a folder."""
@@ -191,7 +208,12 @@ class GoogleServices:
         if folder_id:
             doc_metadata['parents'] = [folder_id]
             
-        doc = self.drive_service.files().create(body=doc_metadata, fields='id').execute()
+        # Added supportsAllDrives=True
+        doc = self.drive_service.files().create(
+            body=doc_metadata, 
+            fields='id',
+            supportsAllDrives=True
+        ).execute()
         return doc.get('id')
     def share_file(self, file_id, email, role='writer'):
         """Shares a file with a specific email."""
