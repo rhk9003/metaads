@@ -1,4 +1,4 @@
-import streamlit as st
+mport streamlit as st
 import datetime
 from utils import GoogleServices
 # Initialize Google Services
@@ -108,24 +108,43 @@ def main():
             st.rerun()
     with st.sidebar:
         st.subheader("管理員專區")
-        if st.button("檢查雲端空間 (Quota)"):
+        if st.button("檢查雲端空間 & 檔案"):
             try:
-                about = services.drive_service.about().get(fields="storageQuota").execute()
+                # 1. Check Quota
+                about = services.drive_service.about().get(fields="storageQuota, user").execute()
                 quota = about['storageQuota']
                 limit = int(quota.get('limit', 0))
                 usage = int(quota.get('usage', 0))
                 trash = int(quota.get('usageInDriveTrash', 0))
                 
-                st.write(f"總容量限制: {limit / (1024**3):.2f} GB")
-                st.write(f"已使用: {usage / (1024**3):.2f} GB")
-                st.write(f"垃圾桶佔用: {trash / (1024**3):.2f} GB")
+                st.write(f"帳號: {about['user']['emailAddress']}")
+                st.write(f"--- 配額資訊 ---")
+                st.write(f"總容量限制: {limit} bytes ({limit / (1024**3):.4f} GB)")
+                st.write(f"已使用: {usage} bytes ({usage / (1024**3):.4f} GB)")
+                st.write(f"垃圾桶佔用: {trash} bytes")
                 
+                # 2. Check File Count
+                st.write(f"--- 檔案列表 (前 20 筆) ---")
+                results = services.drive_service.files().list(
+                    q="'me' in owners and trashed = false",
+                    pageSize=20,
+                    fields="files(id, name, size, createdTime)"
+                ).execute()
+                files = results.get('files', [])
+                
+                if not files:
+                    st.info("查無檔案 (此帳號目前沒有擁有任何檔案)")
+                else:
+                    for f in files:
+                        f_size = f.get('size', '0')
+                        st.text(f"[{f['createdTime']}] {f['name']} ({f_size} bytes)")
+                        
                 if trash > 0:
-                    if st.button("清空垃圾桶"):
+                     if st.button("清空垃圾桶"):
                         services.drive_service.files().emptyTrash().execute()
                         st.success("垃圾桶已清空！")
                         st.rerun()
             except Exception as e:
-                st.error(f"無法存取配額資訊: {e}")
+                st.error(f"查詢失敗: {e}")
 if __name__ == "__main__":
     main()
