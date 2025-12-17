@@ -3,6 +3,7 @@ import datetime
 import json
 import gspread
 from google.oauth2.service_account import Credentials
+from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import streamlit as st
@@ -24,7 +25,25 @@ class GoogleServices:
         st.sidebar.write("Debug: Initializing GoogleServices...")
         
         # Priority 1: Check Streamlit Secrets (Nested Section)
-        if "gcp_service_account" in st.secrets:
+        # 1. Try OAuth Refresh Token (Plan C: User Impersonation - Best for Personal Gmail)
+        if "oauth" in st.secrets:
+            st.sidebar.write("Debug: Found [oauth] config")
+            try:
+                oauth_info = st.secrets["oauth"]
+                self.creds = UserCredentials(
+                    None, # Initial access token is None
+                    refresh_token=oauth_info["refresh_token"],
+                    token_uri=oauth_info["token_uri"],
+                    client_id=oauth_info["client_id"],
+                    client_secret=oauth_info["client_secret"],
+                    scopes=SCOPES
+                )
+                st.sidebar.success("Debug: Auth with OAuth (User Mode) Success!")
+            except Exception as e:
+                st.sidebar.error(f"Debug: OAuth Error {e}")
+                raise e
+        # 2. Try Service Account (Plan A/B - Fallback)
+        elif "gcp_service_account" in st.secrets:
             st.sidebar.write("Debug: Found [gcp_service_account]")
             service_account_info = dict(st.secrets["gcp_service_account"])
             self.creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
@@ -58,6 +77,9 @@ class GoogleServices:
             st.sidebar.write("Debug: Entering Fallback (Priority 3)")
             # Priority 3: Check for ANY json file that looks like a key in the current dir (Fallback)
             json_files = [f for f in os.listdir('.') if f.endswith('.json')]
+            # Filter out client_secret.json as it is NOT a service account key
+            json_files = [f for f in json_files if "client_secret" not in f]
+            
             for f in json_files:
                 try:
                     # quick check if it's a service account file
@@ -69,8 +91,8 @@ class GoogleServices:
                 except:
                     continue
             
-            if not self.creds:
-                raise FileNotFoundError(f"Could not find valid credentials in st.secrets or local file '{service_account_file}'.")
+        if not self.creds:
+            raise FileNotFoundError("Could not find valid credentials (OAuth or Service Account).")
         self.gc = gspread.authorize(self.creds)
         self.drive_service = build('drive', 'v3', credentials=self.creds)
         self.docs_service = build('docs', 'v1', credentials=self.creds)
