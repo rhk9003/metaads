@@ -144,6 +144,21 @@ def main():
                         services.drive_service.files().emptyTrash().execute()
                         st.success("垃圾桶已清空！")
                         st.rerun()
+                st.write("--- Secrets 診斷 ---")
+                if hasattr(st, 'secrets'):
+                    st.write("偵測到的 Secrets Keys:")
+                    st.json(list(st.secrets.keys()))
+                    
+                    if "gcp_service_account" in st.secrets:
+                        st.success("✅ 找到 [gcp_service_account] 設定")
+                    elif "gcp_json" in st.secrets:
+                        st.success("✅ 找到 gcp_json 設定")
+                    elif "private_key" in st.secrets:
+                        st.success("✅ 找到 Root Level 設定")
+                    else:
+                        st.error("❌ 找不到任何已知的 Google 憑證設定")
+                else:
+                    st.error("❌ st.secrets 無法讀取")
             except Exception as e:
                 st.error(f"查詢失敗: {e}")
 if __name__ == "__main__":
