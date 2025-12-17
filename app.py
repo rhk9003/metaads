@@ -42,12 +42,18 @@ def main():
         st.write("---")
     st.title("Meta 廣告上刊資訊填寫")
     services = get_google_services()
+    # Debug: Print what services actually is
+    # st.write(f"DEBUG info: services type={type(services)}, value={services}")
     # Check for service account
     if not services or isinstance(services, str):
         st.error("無法連接 Google 服務。請確認 secrets 設定是否正確。")
         if isinstance(services, str):
             st.error(f"錯誤詳情: {services}")
-        # Stop execution here if auth fails, but Sidebar is already rendered
+        
+        if st.button("清除快取並重試"):
+            st.cache_resource.clear()
+            st.rerun()
+            
         return
     # Sidebar Actions that require services (only if services exist)
     with st.sidebar:
