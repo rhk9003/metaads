@@ -139,12 +139,31 @@ class GoogleServices:
         if files:
             return files[0]['id']
         return None
-    def create_doc(self, title):
-        """Creates a new Google Doc."""
+    def find_folder_in_drive(self, name):
+        """Finds a folder by name in Drive, returns ID if found."""
+        query = f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        results = self.drive_service.files().list(q=query, fields="files(id, name)").execute()
+        files = results.get('files', [])
+        if files:
+            return files[0]['id']
+        return None
+    def create_folder(self, name):
+        """Creates a new folder."""
+        file_metadata = {
+            'name': name,
+            'mimeType': 'application/vnd.google-apps.folder'
+        }
+        file = self.drive_service.files().create(body=file_metadata, fields='id').execute()
+        return file.get('id')
+    def create_doc(self, title, folder_id=None):
+        """Creates a new Google Doc, optionally inside a folder."""
         doc_metadata = {
             'name': title,
             'mimeType': 'application/vnd.google-apps.document'
         }
+        if folder_id:
+            doc_metadata['parents'] = [folder_id]
+            
         doc = self.drive_service.files().create(body=doc_metadata, fields='id').execute()
         return doc.get('id')
     def share_file(self, file_id, email, role='writer'):
@@ -168,7 +187,7 @@ class GoogleServices:
         """
         Checks if 'CASEID_meta廣告上刊文件' exists.
         If yes, returns ID.
-        If no, creates it, shares with customer and admin.
+        If no, creates it in the customer folder, shares with customer and admin.
         """
         doc_name = f"{case_id}_meta廣告上刊文件"
         existing_doc_id = self.find_file_in_drive(doc_name)
@@ -184,7 +203,29 @@ class GoogleServices:
             return existing_doc_id
         else:
             print(f"Creating new document: {doc_name}")
-            new_doc_id = self.create_doc(doc_name)
+            
+            # 1. Determine Customer Folder Name
+            # Split case_id by '_' to get the prefix. e.g. "Nike_Seasonal" -> "Nike"
+            if "_" in str(case_id):
+                folder_name = str(case_id).split("_")[0]
+            else:
+                folder_name = str(case_id)
+            
+            # 2. Check/Create Folder
+            folder_id = self.find_folder_in_drive(folder_name)
+            if not folder_id:
+                print(f"Creating new folder: {folder_name}")
+                folder_id = self.create_folder(folder_name)
+                # Optional: Share folder? The user didn't explicitly ask to share the folder, 
+                # but usually it's good practice. However, adhering strictly to "new doc stored in folder".
+                # If we share the folder, they inherit access to everything inside.
+                # Let's share the folder too for convenience? Or stick to file sharing.
+                # User request: "stored in client name folder". 
+                # I will create the doc INSIDE this folder.
+            
+            # 3. Create Doc inside Folder
+            new_doc_id = self.create_doc(doc_name, folder_id=folder_id)
+            
             self.share_file(new_doc_id, customer_email)
             self.share_file(new_doc_id, ADMIN_EMAIL)
             return new_doc_id
