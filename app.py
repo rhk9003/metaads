@@ -1,7 +1,6 @@
 import streamlit as st
 import datetime
 from utils import GoogleServices
-
 # Initialize Google Services
 # We cache this to avoid re-authenticating on every re-run
 @st.cache_resource
@@ -12,21 +11,17 @@ def get_google_services():
         return None
     except Exception as e:
         return str(e)
-
 def main():
     st.set_page_config(page_title="Meta 廣告上刊系統", page_icon="📝")
     
     st.title("Meta 廣告上刊資訊填寫")
-
     services = get_google_services()
-
     # Check for service account
     if not services or isinstance(services, str):
         st.error("無法連接 Google 服務。請確認 `service_account.json` 是否存在於目錄中。")
         if isinstance(services, str):
             st.error(f"錯誤詳情: {services}")
         return
-
     # Session state initialization
     if 'step' not in st.session_state:
         st.session_state.step = 1
@@ -34,7 +29,6 @@ def main():
         st.session_state.case_id = None
     if 'email' not in st.session_state:
         st.session_state.email = ""
-
     # Step 1: Email Verification
     if st.session_state.step == 1:
         st.header("Step 1: 身份驗證")
@@ -54,7 +48,6 @@ def main():
                         st.rerun()
                     else:
                         st.error("找不到此 Email 對應的案件編號，請確認 Email 是否正確或聯繫管理員。")
-
     # Step 2: Ad Information Form
     elif st.session_state.step == 2:
         st.header(f"Step 2: 填寫上刊資訊 (案件: {st.session_state.case_id})")
@@ -72,7 +65,6 @@ def main():
                 image_url = st.text_input("對應圖片雲端網址")
                 landing_url = st.text_input("廣告到達網址")
                 main_copy = st.text_area("廣告主文案", height=150)
-
             submitted = st.form_submit_button("送出並建立文件")
             
             if submitted:
@@ -110,11 +102,30 @@ def main():
                             
                     except Exception as e:
                         st.error(f"發生錯誤: {e}")
-
         if st.button("回上一步 (重新查詢)"):
             st.session_state.step = 1
             st.session_state.case_id = None
             st.rerun()
-
+    with st.sidebar:
+        st.subheader("管理員專區")
+        if st.button("檢查雲端空間 (Quota)"):
+            try:
+                about = services.drive_service.about().get(fields="storageQuota").execute()
+                quota = about['storageQuota']
+                limit = int(quota.get('limit', 0))
+                usage = int(quota.get('usage', 0))
+                trash = int(quota.get('usageInDriveTrash', 0))
+                
+                st.write(f"總容量限制: {limit / (1024**3):.2f} GB")
+                st.write(f"已使用: {usage / (1024**3):.2f} GB")
+                st.write(f"垃圾桶佔用: {trash / (1024**3):.2f} GB")
+                
+                if trash > 0:
+                    if st.button("清空垃圾桶"):
+                        services.drive_service.files().emptyTrash().execute()
+                        st.success("垃圾桶已清空！")
+                        st.rerun()
+            except Exception as e:
+                st.error(f"無法存取配額資訊: {e}")
 if __name__ == "__main__":
     main()
