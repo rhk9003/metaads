@@ -21,30 +21,41 @@ ADMIN_EMAIL = "rhk9903@gmail.com"
 class GoogleServices:
     def __init__(self, service_account_file='gen-lang-client-0057298651-12025f130563.json'):
         self.creds = None
+        st.sidebar.write("Debug: Initializing GoogleServices...")
         
         # Priority 1: Check Streamlit Secrets (Nested Section)
         if "gcp_service_account" in st.secrets:
+            st.sidebar.write("Debug: Found [gcp_service_account]")
             service_account_info = dict(st.secrets["gcp_service_account"])
             self.creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
         
         # Priority 1.5: Check Streamlit Secrets (Raw JSON String)
         # This is easier for users: just paste the whole JSON into a string variable
         elif "gcp_json" in st.secrets:
+            st.sidebar.write("Debug: Found gcp_json")
             try:
                 service_account_info = json.loads(st.secrets["gcp_json"])
                 self.creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+                st.sidebar.success("Debug: loaded creds from gcp_json")
             except json.JSONDecodeError as e:
+                st.sidebar.error(f"Debug: JSON Error {e}")
                 raise ValueError(f"Invalid JSON in secrets 'gcp_json': {e}")
+            except Exception as e:
+                st.sidebar.error(f"Debug: Creds Error {e}")
+                raise e
         # Priority 1.8: Check Streamlit Secrets (Root Level Fallback)
         elif "private_key" in st.secrets:
+            st.sidebar.write("Debug: Found private_key (Root)")
             service_account_info = dict(st.secrets)
             self.creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
         
         # Priority 2: Check Local File
         elif os.path.exists(service_account_file):
+            st.sidebar.write("Debug: Found local file")
             self.creds = Credentials.from_service_account_file(service_account_file, scopes=SCOPES)
         
         else:
+            st.sidebar.write("Debug: Entering Fallback (Priority 3)")
             # Priority 3: Check for ANY json file that looks like a key in the current dir (Fallback)
             json_files = [f for f in os.listdir('.') if f.endswith('.json')]
             for f in json_files:
