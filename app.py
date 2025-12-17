@@ -168,6 +168,19 @@ def main():
                         st.info(f"產生的廣告組合名稱: {block_name}")
                         st.info(f"文件 ID: {doc_id} (已分享給您)")
                         
+                        # 4. Send Email Notification
+                        doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+                        admin_email = "rhk9903@gmail.com"
+                        
+                        try:
+                            st.info("📨 正在寄送確認信...")
+                            services.send_confirmation_email(st.session_state.email, ad_data, doc_url)
+                            if st.session_state.email != admin_email:
+                                services.send_confirmation_email(admin_email, ad_data, doc_url)
+                            st.success(f"✅ 確認信已寄出！")
+                        except Exception as e:
+                            st.error(f"信件寄送失敗，但資料已存檔。錯誤: {e}")
+                        
                         # Button removed to fix st.form error
                         st.info("您可以直接修改上方內容並再次送出。")
                             
