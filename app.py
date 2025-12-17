@@ -168,8 +168,8 @@ def main():
                         st.info(f"產生的廣告組合名稱: {block_name}")
                         st.info(f"文件 ID: {doc_id} (已分享給您)")
                         
-                        if st.button("填寫下一則"):
-                            pass
+                        # Button removed to fix st.form error
+                        st.info("您可以直接修改上方內容並再次送出。")
                             
                     except Exception as e:
                         st.error(f"發生錯誤: {e}")
