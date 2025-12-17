@@ -27,6 +27,8 @@ class GoogleServices:
     def __init__(self, service_account_file='gen-lang-client-0057298651-12025f130563.json'):
         self.creds = None
         st.sidebar.write("Debug: Initializing GoogleServices...")
+        self.auth_mode = "service_account" # Default
+        self.email_map = None # Cache for sheet lookups
         
         # Priority 1: Check Streamlit Secrets (Nested Section)
         # 1. Try OAuth Refresh Token (Plan C: User Impersonation - Best for Personal Gmail)
@@ -42,6 +44,7 @@ class GoogleServices:
                     client_secret=oauth_info["client_secret"],
                     scopes=SCOPES
                 )
+                self.auth_mode = "oauth"
                 st.sidebar.success("Debug: Auth with OAuth (User Mode) Success!")
             except Exception as e:
                 st.sidebar.error(f"Debug: OAuth Error {e}")
@@ -153,30 +156,34 @@ class GoogleServices:
                 # Let's assume it's the column named "Case ID" or similar.
                 # If we rely on get_all_records(), it creates a dict with keys as headers.
                 records = worksheet.get_all_records()
-                for record in records:
-                    # Normalize keys to lower case for search
-                    normalized_record = {k.lower(): v for k, v in record.items()}
-                    # Check if this record matches the email
-                    # Keys might be 'Email Address', 'User Email', etc.
-                    found_email = False
-                    for k, v in normalized_record.items():
-                        if ('email' in k or '信箱' in k) and str(v).strip().lower() == email.strip().lower():
-                            found_email = True
-                            break
-                    
-                    if found_email:
-                        # Find Case ID
-                        for k, v in normalized_record.items():
-                            if '案件編號' in k or 'case' in k:
-                                return str(v)
+            # Lazy load the index
+            if self.email_map is None:
+                st.sidebar.text("Debug: Building Email Index...")
+                records = self.sheet.get_all_records()
+                # Create a map {email: case_id}. standardizing to lower case for search
+                self.email_map = {}
+                for row in records:
+                    # Adjust key names based on your actual sheet headers
+                    # Assuming 'Email' and 'Case ID' (or similar)
+                    row_email = str(row.get('Email', '')).strip()
+                    row_case = str(row.get('Case ID', '')).strip()
+                    if row_email:
+                        self.email_map[row_email] = row_case
+                st.sidebar.text(f"Debug: Index built with {len(self.email_map)} records.")
+            case_id = self.email_map.get(email.strip())
             
+            if case_id:
+                return case_id
             return None
         except Exception as e:
-            print(f"Error reading sheet: {e}")
+            st.error(f"Error reading Sheet: {e}")
             return None
-    def find_file_in_drive(self, name):
-        """Finds a file by name in Drive, returns ID if found."""
+    def find_file_in_drive(self, name, parent_id=None):
+        """Finds a file by name in Drive, strictly under parent_id if provided."""
         query = f"name = '{name}' and mimeType != 'application/vnd.google-apps.folder' and trashed = false"
+        if parent_id:
+            query += f" and '{parent_id}' in parents"
+            
         # Added supportsAllDrives=True to find files in Shared Drives
         results = self.drive_service.files().list(
             q=query, 
@@ -188,9 +195,11 @@ class GoogleServices:
         if files:
             return files[0]['id']
         return None
-    def find_folder_in_drive(self, name):
-        """Finds a folder by name in Drive, returns ID if found."""
+    def find_folder_in_drive(self, name, parent_id=None):
+        """Finds a folder by name in Drive, strictly under parent_id if provided."""
         query = f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        if parent_id:
+            query += f" and '{parent_id}' in parents"
         # Added supportsAllDrives=True to find folders in Shared Drives
         results = self.drive_service.files().list(
             q=query, 
@@ -300,9 +309,10 @@ class GoogleServices:
             else:
                 folder_name = str(case_id)
             
-            # 2. Check/Create Customer Folder INSIDE Root
-            st.sidebar.text(f"Debug: Searching/Creating Subfolder '{folder_name}'...")
-            folder_id = self.find_folder_in_drive(folder_name)
+            # 2. Check/Create Customer Folder INSIDE Root (Strict Tree Search)
+            st.sidebar.text(f"Debug: Searching/Creating Subfolder '{folder_name}' under Root...")
+            # Pass root_id as parent_id to scope the search
+            folder_id = self.find_folder_in_drive(folder_name, parent_id=root_id)
             
             if not folder_id:
                 st.sidebar.text(f"Debug: Creating '{folder_name}' inside Root...")
@@ -313,7 +323,7 @@ class GoogleServices:
                      st.sidebar.error(f"❌ Failed to create subfolder: {e}")
                      raise e
             else:
-                st.sidebar.info(f"Debug: Found existing subfolder {folder_id}")
+                st.sidebar.info(f"Debug: Found existing subfolder {folder_id} under Root")
             
             # 3. Create Doc inside Customer Folder
             st.sidebar.text("Debug: Creating Document...")
@@ -469,7 +479,14 @@ class GoogleServices:
                 st.warning(f"⚠️ {error_msg}")
         return block_name
     def send_confirmation_email(self, to_email, ad_data, doc_url):
-        """Sends a confirmation email using Gmail API."""
+        """
+        Sends a confirmation email using Gmail API.
+        Only works in OAuth mode.
+        """
+        if self.auth_mode != "oauth":
+            print(f"Skipping email to {to_email} (Not in OAuth mode)")
+            st.info("ℹ️ 目前為 Service Account 模式，跳過 Gmail 寄信 (系統紀錄已存檔)。")
+            return False
         try:
             service = build('gmail', 'v1', credentials=self.creds)
             message = MIMEText(f"""
@@ -478,9 +495,15 @@ class GoogleServices:
             您的廣告素材已成功提交！
             
             【提交資訊】
+            填寫時間: {ad_data.get('fill_time')}
             廣告名稱/編號: {ad_data.get('ad_name_id')}
             對應圖片: {ad_data.get('image_name_id')}
-            填寫時間: {ad_data.get('fill_time')}
+            圖片連結: {ad_data.get('image_url')}
+            廣告標題: {ad_data.get('headline')}
+            廣告到達網址: {ad_data.get('landing_url')}
+            
+            【廣告文案】
+            {ad_data.get('main_copy')}
             
             【文件連結】
             {doc_url}
@@ -503,4 +526,3 @@ class GoogleServices:
             print(f"Failed to send email: {e}")
             st.error(f"⚠️ Email 寄送失敗: {e}")
             return False
-
