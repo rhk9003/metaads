@@ -1,8 +1,3 @@
-
-utils.py
-
-
-
 import os
 import re
 import datetime
@@ -508,3 +503,4 @@ class GoogleServices:
             print(f"Failed to send email: {e}")
             st.error(f"⚠️ Email 寄送失敗: {e}")
             return False
+
