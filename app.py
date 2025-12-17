@@ -1,9 +1,14 @@
+
+app.py
+
+
+
 import streamlit as st
 import datetime
 from utils import GoogleServices
 # Initialize Google Services
 # We cache this to avoid re-authenticating on every re-run
-@st.cache_resource
+# Determine if cached or not - removing cache for now
 def get_google_services():
     try:
         instance = GoogleServices()
@@ -24,7 +29,6 @@ def main():
         # Secrets Diagnostic
         st.write("--- Secrets 診斷 ---")
         if hasattr(st, 'secrets'):
-            # Show keys only, safe to display
             keys = list(st.secrets.keys())
             st.write(f"偵測到的 Keys: {keys}")
             
@@ -42,11 +46,13 @@ def main():
         st.write("---")
     st.title("Meta 廣告上刊資訊填寫")
     services = get_google_services()
-    # Debug: Print what services actually is
-    # st.write(f"DEBUG info: services type={type(services)}, value={services}")
+    # Debug: Print boolean evaluation
+    # st.write(f"Debug Main: type(services)={type(services)}")
+    # st.write(f"Debug Main: bool(services)={bool(services)}")
     # Check for service account
     if not services or isinstance(services, str):
-        st.error("無法連接 Google 服務。請確認 secrets 設定是否正確。")
+        st.error(f"無法連接 Google 服務。")
+        st.error(f"變數狀態: services={services}, type={type(services)}")
         if isinstance(services, str):
             st.error(f"錯誤詳情: {services}")
         
