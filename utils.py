@@ -1,8 +1,15 @@
+
+utils.py
+
+
+
 import os
 import re
 import datetime
 import json
 import gspread
+import base64
+from email.mime.text import MIMEText
 from google.oauth2.service_account import Credentials
 from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
@@ -12,7 +19,8 @@ import streamlit as st
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/documents'
+    'https://www.googleapis.com/auth/documents',
+    'https://www.googleapis.com/auth/gmail.send' 
 ]
 # You might want to move these to environment variables or a config file
 MASTER_SHEET_URL = "https://docs.google.com/spreadsheets/d/1zXHavJqhOBq1-m_VR7sxMkeOHdXoD9EmQCEM1Nl816I/edit?usp=sharing"
@@ -465,3 +473,38 @@ class GoogleServices:
                 print(error_msg)
                 st.warning(f"⚠️ {error_msg}")
         return block_name
+    def send_confirmation_email(self, to_email, ad_data, doc_url):
+        """Sends a confirmation email using Gmail API."""
+        try:
+            service = build('gmail', 'v1', credentials=self.creds)
+            message = MIMEText(f"""
+            Hi,
+            
+            您的廣告素材已成功提交！
+            
+            【提交資訊】
+            廣告名稱/編號: {ad_data.get('ad_name_id')}
+            對應圖片: {ad_data.get('image_name_id')}
+            填寫時間: {ad_data.get('fill_time')}
+            
+            【文件連結】
+            {doc_url}
+            
+            這是一封自動發送的確認信。
+            """)
+            
+            message['to'] = to_email
+            message['from'] = 'me'
+            message['subject'] = f"✅ 素材提交成功：{ad_data.get('ad_name_id')}"
+            
+            # Encode the message safely
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            body = {'raw': raw_message}
+            
+            service.users().messages().send(userId='me', body=body).execute()
+            print(f"Email sent to {to_email}")
+            return True
+        except Exception as e:
+            print(f"Failed to send email: {e}")
+            st.error(f"⚠️ Email 寄送失敗: {e}")
+            return False
