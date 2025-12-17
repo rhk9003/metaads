@@ -6,10 +6,13 @@ from utils import GoogleServices
 @st.cache_resource
 def get_google_services():
     try:
-        return GoogleServices()
-    except FileNotFoundError:
-        return None
+        instance = GoogleServices()
+        st.sidebar.write(f"Debug: Service Instance Created: {type(instance)}")
+        return instance
     except Exception as e:
+        import traceback
+        st.sidebar.error(f"Debug: Init Exception: {e}")
+        st.sidebar.text(traceback.format_exc())
         return str(e)
 def main():
     st.set_page_config(page_title="Meta 廣告上刊系統", page_icon="📝")
