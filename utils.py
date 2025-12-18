@@ -434,7 +434,7 @@ class GoogleServices:
         text_content = (
             f"\n\n--------------------------------------------------\n"
             f"廣告組合 ID: {block_name}\n"
-            f"填寫時間: {ad_data.get('fill_time')}\n"
+            f"送出時間: {ad_data.get('fill_time')}\n"
             f"廣告名稱/編號: {ad_data.get('ad_name_id')}\n"
             f"對應圖片名稱/編號: {ad_data.get('image_name_id')}\n"
             f"對應圖片雲端網址: {ad_data.get('image_url')}\n"
@@ -452,27 +452,10 @@ class GoogleServices:
         except:
             parent_id = None # Fallback (won't upload proxy if no parent)
         requests_body = [
-            {
-                'insertText': {
-                    'location': {
-                        'index': 1, 
-                    },
-                    'text': text_content
-                }
-            }
-        ]
-        
-        # To append efficiently without reading size, usually we use EndOfSegmentLocation if available in specific update methods, 
-        # but pure insertText takes an index. 
-        # Let's read the doc length first to append to the end.
-        doc = self.docs_service.documents().get(documentId=doc_id).execute()
-        content = doc.get('body').get('content')
-        last_index = content[-1]['endIndex'] - 1 
-        requests_body = [
              {
                 'insertText': {
                     'location': {
-                        'index': last_index
+                        'index': 1
                     },
                     'text': text_content
                 }
@@ -480,53 +463,53 @@ class GoogleServices:
         ]
         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
         
-        # --- Attempt to insert image ---
-        raw_image_url = ad_data.get('image_url')
-        if raw_image_url and parent_id:
-            # PROCESS URL (Advanced Dev Logic: Proxy Upload)
-            st.sidebar.text(f"Debug: Proxying image to folder {parent_id}")
-            image_url = self._proxy_image_via_drive(raw_image_url, parent_id)
-            
-            if not image_url:
-                 # Fallback to raw if proxy failed
-                 image_url = raw_image_url
-            
-            try:
-                # We need to refresh the index because we just inserted text
-                doc = self.docs_service.documents().get(documentId=doc_id).execute()
-                content = doc.get('body').get('content')
-                last_index = content[-1]['endIndex'] - 1 
-                
-                image_requests = [
-                    {
-                        'insertInlineImage': {
-                            'uri': image_url,
-                            'location': {
-                                'index': last_index
-                            },
-                            'objectSize': {
-                                'width': {
-                                    'magnitude': 400,
-                                    'unit': 'PT'
-                                }
-                            }
-                        }
-                    },
-                     {
-                        'insertText': {
-                             'location': {
-                                'index': last_index + 1 # Insert newline after image (conceptually)
-                            },
-                            'text': "\n"
-                        }
-                    }
-                ]
-                self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
-                print(f"Image inserted successfully: {image_url}")
-            except Exception as e:
-                error_msg = f"圖片插入失敗 (這通常是因為網址不是『公開直連』的圖片連結，例如 Google Drive 預覽連結是無法直接用的): {e}"
-                print(error_msg)
-                st.warning(f"⚠️ {error_msg}")
+        # --- Image Insertion Disabled by User Request ---
+        # raw_image_url = ad_data.get('image_url')
+        # if raw_image_url and parent_id:
+        #     # PROCESS URL (Advanced Dev Logic: Proxy Upload)
+        #     st.sidebar.text(f"Debug: Proxying image to folder {parent_id}")
+        #     image_url = self._proxy_image_via_drive(raw_image_url, parent_id)
+        #     
+        #     if not image_url:
+        #          # Fallback to raw if proxy failed
+        #          image_url = raw_image_url
+        #     
+        #     try:
+        #         # We need to refresh the index because we just inserted text
+        #         doc = self.docs_service.documents().get(documentId=doc_id).execute()
+        #         content = doc.get('body').get('content')
+        #         last_index = content[-1]['endIndex'] - 1 
+        #         
+        #         image_requests = [
+        #             {
+        #                 'insertInlineImage': {
+        #                     'uri': image_url,
+        #                     'location': {
+        #                         'index': last_index
+        #                     },
+        #                     'objectSize': {
+        #                         'width': {
+        #                             'magnitude': 400,
+        #                             'unit': 'PT'
+        #                         }
+        #                     }
+        #                 }
+        #             },
+        #              {
+        #                 'insertText': {
+        #                      'location': {
+        #                         'index': last_index + 1 # Insert newline after image (conceptually)
+        #                     },
+        #                     'text': "\n"
+        #                 }
+        #             }
+        #         ]
+        #         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
+        #         print(f"Image inserted successfully: {image_url}")
+        #     except Exception as e:
+        #         error_msg = f"圖片插入失敗 (這通常是因為網址不是『公開直連』的圖片連結，例如 Google Drive 預覽連結是無法直接用的): {e}"
+        #         print(error_msg)
+        #         st.warning(f"⚠️ {error_msg}")
         return block_name
     def send_confirmation_email(self, to_email, ad_data, doc_url):
         """
@@ -545,7 +528,7 @@ class GoogleServices:
             您的廣告素材已成功提交！
             
             【提交資訊】
-            填寫時間: {ad_data.get('fill_time')}
+            送出時間: {ad_data.get('fill_time')}
             廣告名稱/編號: {ad_data.get('ad_name_id')}
             對應圖片: {ad_data.get('image_name_id')}
             圖片連結: {ad_data.get('image_url')}
