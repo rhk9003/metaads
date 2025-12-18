@@ -292,11 +292,13 @@ class GoogleServices:
         if existing_doc_id:
             st.sidebar.success(f"Debug: Doc found ({existing_doc_id})")
             print(f"Document '{doc_name}' already exists. ID: {existing_doc_id}")
-            try:
-                self.share_file(existing_doc_id, customer_email)
-                self.share_file(existing_doc_id, ADMIN_EMAIL)
-            except:
-                pass 
+            # Optimization: Don't re-share if it already exists to avoid spamming emails.
+            # If user lost access, they can contact admin or we can add a specific button for it.
+            # try:
+            #     self.share_file(existing_doc_id, customer_email)
+            #     self.share_file(existing_doc_id, ADMIN_EMAIL)
+            # except:
+            #     pass 
             return existing_doc_id
         else:
             print(f"Creating new document: {doc_name}")
@@ -346,47 +348,27 @@ class GoogleServices:
             self.share_file(new_doc_id, customer_email)
             self.share_file(new_doc_id, ADMIN_EMAIL)
             return new_doc_id
-    def _proxy_image_via_drive(self, url, folder_id):
+    def upload_image_to_drive(self, image_file, filename, parent_id, folder_name="Images_圖檔"):
         """
-        Downloads the image (from Drive or Web) and re-uploads it as a clean
-        public JPG/PNG file in the customer's folder.
-        Returns the new 'webContentLink' which is guaranteed to be direct.
+        Uploads an image file object to Drive under specific subfolder.
+        Returns the High-Res Thumbnail Link.
         """
         try:
-            image_data = None
-            filename = f"temp_image_{datetime.datetime.now().strftime('%H%M%S')}.jpg"
-            # 1. Check if it's a Drive Link -> Use API to download bytes
-            drive_pattern = r"(?:https?://)?(?:drive|docs)\.google\.com/(?:file/d/|open\?id=|uc\?id=)([-w]+)"
-            match = re.search(drive_pattern, url)
+            # 1. Ensure 'Images' folder exists
+            images_folder_id = self.find_folder_in_drive(folder_name, parent_id=parent_id)
+            if not images_folder_id:
+                st.sidebar.text(f"Debug: Creating '{folder_name}' folder...")
+                images_folder_id = self.create_folder(folder_name, parent_id=parent_id)
             
-            if match:
-                file_id = match.group(1)
-                st.sidebar.text(f"Debug: Proxying Drive File {file_id}")
-                # Download bytes from Drive
-                request = self.drive_service.files().get_media(fileId=file_id)
-                fh = io.BytesIO()
-                downloader = MediaIoBaseUpload(fh, mimetype='image/jpeg', resumable=True) # Typo here, logic handles download differently
-                # Actually, for downloading we use MediaIoBaseDownload (not imported) or request.execute() returning bytes
-                # Let's use execute() which returns content if we handle it right, 
-                # but standard way is request = service.files().get_media... 
-                # Simplest way:
-                image_data = request.execute()
-            else:
-                # 2. Web Link -> Use requests
-                st.sidebar.text(f"Debug: Proxying Web URL...")
-                response = requests.get(url, timeout=10)
-                if response.status_code == 200:
-                    image_data = response.content
-                else:
-                    raise Exception(f"Download failed: {response.status_code}")
-            if not image_data:
-                raise Exception("Empty image data")
-            # 3. Upload to Drive (Clean Re-upload)
+            # 2. Upload File
+            # Reset pointer just in case
+            image_file.seek(0)
+            
             file_metadata = {
                 'name': filename,
-                'parents': [folder_id]
+                'parents': [images_folder_id]
             }
-            media = MediaIoBaseUpload(io.BytesIO(image_data), mimetype='image/jpeg', resumable=True)
+            media = MediaIoBaseUpload(image_file, mimetype=image_file.type, resumable=True)
             
             new_file = self.drive_service.files().create(
                 body=file_metadata,
@@ -396,8 +378,8 @@ class GoogleServices:
             ).execute()
             
             new_file_id = new_file.get('id')
-            st.sidebar.success(f"Debug: Proxy Upload Success ({new_file_id})")
-            # 4. Make Public (Reader)
+            st.sidebar.success(f"Debug: Image Upload Success ({new_file_id})")
+            # 3. Make Public (Reader)
             self.drive_service.permissions().create(
                 fileId=new_file_id,
                 body={'role': 'reader', 'type': 'anyone'}
@@ -407,109 +389,181 @@ class GoogleServices:
             import time
             time.sleep(2)
             
-            # 5. Return Direct Link (Prefer Thumbnail for reliability)
+            # 4. Return Direct Link (Prefer Thumbnail for reliability)
             thumb_link = new_file.get('thumbnailLink')
             if thumb_link:
-                # Resize to large (s1600 is usually safe and high res enough for docs)
+                # Resize to large
                 final_link = thumb_link.replace('=s220', '=s1600')
-                print(f"Debug: Using Thumbnail Link: {final_link}")
-                return final_link
+                return final_link, new_file.get('webContentLink')
             
-            return new_file.get('webContentLink')
+            return new_file.get('webContentLink'), new_file.get('webContentLink')
         except Exception as e:
-            print(f"Proxy failed: {e}")
-            st.warning(f"⚠️ 圖片轉存失敗: {e}")
-            return None
-    def append_ad_data_to_doc(self, doc_id, ad_data):
+            print(f"Upload failed: {e}")
+            st.warning(f"⚠️ 圖片上傳失敗: {e}")
+            return None, None
+    def append_ad_data_to_doc(self, doc_id, ad_data, case_id):
         """
-        Appends the formatted ad data to the Google Doc.
-        ad_data is a dict containing header info.
+        Appends the formatted ad data to the Google Doc using a Table Layout.
+        Left Column: Text Info
+        Right Column: Image Preview
         """
         # Define the block name provided in the request
         block_name = f"{ad_data.get('ad_name_id')}_{ad_data.get('image_name_id')}"
         
-        # Current time for the file update logic if needed, but we write to doc body
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # Construct the text content
-        text_content = (
-            f"\n\n--------------------------------------------------\n"
-            f"廣告組合 ID: {block_name}\n"
-            f"送出時間: {ad_data.get('fill_time')}\n"
-            f"廣告名稱/編號: {ad_data.get('ad_name_id')}\n"
-            f"對應圖片名稱/編號: {ad_data.get('image_name_id')}\n"
-            f"對應圖片雲端網址: {ad_data.get('image_url')}\n"
-            f"廣告標題: {ad_data.get('headline')}\n"
-            f"廣告主文案:\n{ad_data.get('main_copy')}\n"
-            f"廣告到達網址: {ad_data.get('landing_url')}\n"
-            f"--------------------------------------------------\n"
-        )
-        
-        # We need to determine the folder_id of this doc to store the proxy image
-        # Retrieve doc parent
+        # We need to determine the folder_id of this doc to store the image
         try:
             doc_info = self.drive_service.files().get(fileId=doc_id, fields='parents', supportsAllDrives=True).execute()
             parent_id = doc_info.get('parents', [None])[0]
         except:
-            parent_id = None # Fallback (won't upload proxy if no parent)
+            parent_id = None
+
+        # --- Image Upload Logic ---
+        image_file = ad_data.get('image_file')
+        image_insert_link = None
+        
+        if image_file and parent_id:
+            # 1. Determine Filename
+            original_ext = os.path.splitext(image_file.name)[1]
+            if not original_ext:
+                original_ext = ".jpg"
+            
+            final_filename = f"{ad_data.get('image_name_id')}{original_ext}"
+            
+            # 1.5 Determine Folder Name (ClientName_img)
+            if "_" in str(case_id):
+                customer_name = str(case_id).split("_")[0]
+            else:
+                customer_name = str(case_id)
+            target_folder_name = f"{customer_name}_img"
+
+            # 2. Upload
+            st.sidebar.text(f"Debug: Uploading image '{final_filename}' to '{target_folder_name}'...")
+            thumb, web = self.upload_image_to_drive(image_file, final_filename, parent_id, folder_name=target_folder_name)
+            
+            # Update ad_data['image_url'] for text display/email
+            ad_data['image_url'] = web
+            image_insert_link = thumb
+        
+        # --- Create Table Layout ---
+        # 1. Insert Table (1 Row, 2 Columns) at Index 1 (Top)
         requests_body = [
-             {
-                'insertText': {
+            {
+                'insertTable': {
+                    'rows': 1,
+                    'columns': 2,
                     'location': {
                         'index': 1
-                    },
-                    'text': text_content
+                    }
                 }
             }
         ]
         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_body}).execute()
         
-        # --- Image Insertion Disabled by User Request ---
-        # raw_image_url = ad_data.get('image_url')
-        # if raw_image_url and parent_id:
-        #     # PROCESS URL (Advanced Dev Logic: Proxy Upload)
-        #     st.sidebar.text(f"Debug: Proxying image to folder {parent_id}")
-        #     image_url = self._proxy_image_via_drive(raw_image_url, parent_id)
-        #     
-        #     if not image_url:
-        #          # Fallback to raw if proxy failed
-        #          image_url = raw_image_url
-        #     
-        #     try:
-        #         # We need to refresh the index because we just inserted text
-        #         doc = self.docs_service.documents().get(documentId=doc_id).execute()
-        #         content = doc.get('body').get('content')
-        #         last_index = content[-1]['endIndex'] - 1 
-        #         
-        #         image_requests = [
-        #             {
-        #                 'insertInlineImage': {
-        #                     'uri': image_url,
-        #                     'location': {
-        #                         'index': last_index
-        #                     },
-        #                     'objectSize': {
-        #                         'width': {
-        #                             'magnitude': 400,
-        #                             'unit': 'PT'
-        #                         }
-        #                     }
-        #                 }
-        #             },
-        #              {
-        #                 'insertText': {
-        #                      'location': {
-        #                         'index': last_index + 1 # Insert newline after image (conceptually)
-        #                     },
-        #                     'text': "\n"
-        #                 }
-        #             }
-        #         ]
-        #         self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': image_requests}).execute()
-        #         print(f"Image inserted successfully: {image_url}")
-        #     except Exception as e:
-        #         error_msg = f"圖片插入失敗 (這通常是因為網址不是『公開直連』的圖片連結，例如 Google Drive 預覽連結是無法直接用的): {e}"
-        #         print(error_msg)
-        #         st.warning(f"⚠️ {error_msg}")
+        # 2. Fetch Document to get Table Cell Indices
+        doc = self.docs_service.documents().get(documentId=doc_id).execute()
+        content = doc.get('body').get('content')
+        
+        # The newly inserted table should be the second element (Index 0 is usually SectionBreak/Para)
+        # We look for the Table at the start.
+        # Since we inserted at Index 1, it should be right after the start.
+        
+        table = None
+        for element in content:
+            if 'table' in element:
+                # We assume the first table found is the one we just created (since we prepended it)
+                # Or we can check start indices. 
+                # Let's assume the one with the lowest startIndex (>= 1) is ours.
+                table = element['table']
+                break
+        
+        if not table:
+            st.error("Error: Could not find created table to insert data.")
+            return block_name
+
+        # Get Cell 0 (Left) and Cell 1 (Right)
+        try:
+            row = table['tableRows'][0]
+            cell_left = row['tableCells'][0]
+            cell_right = row['tableCells'][1]
+            
+            # Indices to insert text are the 'startIndex' of the cell's content content.
+            # But usually we insert at cell['content'][0]['startIndex'] if it exists?
+            # Actually simpler: cell['startIndex'] is the start of the cell. 
+            # Content starts at cell['startIndex'] + 1 ? No, API says `startIndex` within the content list.
+            # actually `content` list has structure.
+            # We can just use the index from the API response structure.
+            
+            # Safest: Use cell['content'][-1]['endIndex'] - 1 to append? 
+            # Or just use the cell's `startIndex` + 1?
+            # Docs API: "The content of a table cell is a sequence of StructuralElements."
+            # We want to insert into the empty cell.
+            
+            # Let's use the explicit structure found in `content`.
+            # If the cell is empty, it usually contains a single empty paragraph (ending with \n).
+            
+            left_index = cell_left['content'][0]['startIndex']
+            right_index = cell_right['content'][0]['startIndex']
+            
+            # --- Text Content (Left) ---
+            text_content = (
+                f"廣告組合 ID: {block_name}\n"
+                f"送出時間: {ad_data.get('fill_time')}\n"
+                f"廣告名稱/編號: {ad_data.get('ad_name_id')}\n"
+                f"對應圖片名稱/編號: {ad_data.get('image_name_id')}\n"
+                f"對應圖片雲端網址: {ad_data.get('image_url')}\n"
+                f"廣告標題: {ad_data.get('headline')}\n"
+                f"廣告到達網址: {ad_data.get('landing_url')}\n"
+                f"廣告主文案:\n{ad_data.get('main_copy')}\n"
+            )
+            
+            # Requests for Text and Image
+            # Note: We must be careful about index shifting if we do one by one.
+            # But the cells are separate, so indices inside Cell 2 shouldn't change if we edit Cell 1?
+            # WRONG. Steps in a batchUpdate are applied sequentially, and subsequent indices ARE affected.
+            # So we should insert the Image (Right) first (higher index) then Text (Left) (lower index)?
+            # Yes, standard practice is reverse order of index to avoid shifting issues.
+            
+            # However, if right_index > left_index is guaranteed?
+            # Yes, Left Cell is before Right Cell.
+            
+            batch_requests = []
+            
+            # 1. Insert Image into Right Cell (Higher Index)
+            if image_insert_link:
+                batch_requests.append({
+                    'insertInlineImage': {
+                        'uri': image_insert_link,
+                        'location': {
+                            'index': right_index
+                        },
+                        'objectSize': {
+                            'width': {
+                                'magnitude': 150, # Smaller preview requested
+                                'unit': 'PT'
+                            }
+                        }
+                    }
+                })
+
+            # 2. Insert Text into Left Cell (Lower Index)
+            batch_requests.append({
+                'insertText': {
+                    'location': {
+                        'index': left_index
+                    },
+                    'text': text_content
+                }
+            })
+            
+            self.docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': batch_requests}).execute()
+            
+            # Optional: Add a spacer line after the table steps it down? 
+            # We already inserted table at Index 1.
+            
+        except Exception as e:
+            st.error(f"Error populating table: {e}")
+            print(f"Table Error: {e}")
+        
         return block_name
     def send_confirmation_email(self, to_email, ad_data, doc_url):
         """
@@ -546,7 +600,7 @@ class GoogleServices:
             
             message['to'] = to_email
             message['from'] = 'me'
-            message['subject'] = f"✅ 素材提交成功：{ad_data.get('ad_name_id')}"
+            message['subject'] = f"✅ [{ad_data.get('case_id')}] 素材提交成功：{ad_data.get('ad_name_id')}"
             
             # Encode the message safely
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
