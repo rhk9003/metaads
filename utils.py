@@ -1,3 +1,8 @@
+
+utils.py
+
+
+
 import os
 import re
 import datetime
@@ -391,7 +396,7 @@ class GoogleServices:
             new_file = self.drive_service.files().create(
                 body=file_metadata,
                 media_body=media,
-                fields='id, webContentLink',
+                fields='id, webContentLink, thumbnailLink',
                 supportsAllDrives=True
             ).execute()
             
@@ -403,9 +408,18 @@ class GoogleServices:
                 body={'role': 'reader', 'type': 'anyone'}
             ).execute()
             
-            # 5. Return Direct Link
-            # Force a get to ensure we have the link (create returns it usually but let's be safe)
-            # Actually create asked for 'webContentLink'
+            # Wait for permission propagation
+            import time
+            time.sleep(2)
+            
+            # 5. Return Direct Link (Prefer Thumbnail for reliability)
+            thumb_link = new_file.get('thumbnailLink')
+            if thumb_link:
+                # Resize to large (s1600 is usually safe and high res enough for docs)
+                final_link = thumb_link.replace('=s220', '=s1600')
+                print(f"Debug: Using Thumbnail Link: {final_link}")
+                return final_link
+            
             return new_file.get('webContentLink')
         except Exception as e:
             print(f"Proxy failed: {e}")
