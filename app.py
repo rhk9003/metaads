@@ -1,195 +1,164 @@
 import streamlit as st
-import datetime
-from utils import GoogleServices
-# Initialize Google Services
-# We cache this to avoid re-authenticating on every re-run
-# Determine if cached or not - removing cache for now
-def get_google_services():
-    try:
-        instance = GoogleServices()
-        st.sidebar.write(f"Debug: Service Instance Created: {type(instance)}")
-        return instance
-    except Exception as e:
-        import traceback
-        st.sidebar.error(f"Debug: Init Exception: {e}")
-        st.sidebar.text(traceback.format_exc())
-        return str(e)
+from services.google_sheet import get_sheet_service
+from services.email_service import send_update_notification
+from views.stage1 import render_stage1
+from views.stage2 import render_stage2
+import time
+
+st.set_page_config(
+    page_title="廣告投放服務系統",
+    page_icon="📝",
+    layout="centered"
+)
+
+# Initialize Session State
+if 'user_data' not in st.session_state:
+    st.session_state['user_data'] = None
+if 'auth_mode' not in st.session_state:
+    st.session_state['auth_mode'] = None # 'register' or 'login'
+
 def main():
-    st.set_page_config(page_title="Meta 廣告上刊系統", page_icon="📝")
-    
-    # --- Sidebar (Always show for debugging) ---
+    st.title("📝 廣告投放服務系統")
+
+    # Sidebar Navigation
     with st.sidebar:
-        st.subheader("管理員專區")
+        st.header("功能選單")
         
-        # Secrets Diagnostic
-        st.write("--- Secrets 診斷 ---")
-        if hasattr(st, 'secrets'):
-            keys = list(st.secrets.keys())
-            st.write(f"偵測到的 Keys: {keys}")
-            
-            if "gcp_service_account" in st.secrets:
-                st.success("✅ [gcp_service_account] 存在")
-            elif "gcp_json" in st.secrets:
-                st.success("✅ gcp_json 存在")
-            elif "private_key" in st.secrets:
-                st.success("✅ private_key (Root) 存在")
-            else:
-                st.error("❌ 未偵測到有效金鑰")
+        # If logged in, show user info and logout
+        if st.session_state['user_data']:
+            # Use safe get just in case
+            name = st.session_state['user_data'].get('party_a') or st.session_state['user_data'].get('ClientName')
+            st.success(f"Hi, {name}")
+            if st.button("登出"):
+                st.session_state['user_data'] = None
+                st.session_state['auth_mode'] = None
+                st.rerun()
         else:
-            st.error("❌ st.secrets 無法讀取")
-            
-        st.write("---")
-    st.title("Meta 廣告上刊資訊填寫")
-    services = get_google_services()
-    # Debug: Print boolean evaluation
-    # st.write(f"Debug Main: type(services)={type(services)}")
-    # st.write(f"Debug Main: bool(services)={bool(services)}")
-    # Check for service account
-    if not services or isinstance(services, str):
-        st.error(f"無法連接 Google 服務。")
-        st.error(f"變數狀態: services={services}, type={type(services)}")
-        if isinstance(services, str):
-            st.error(f"錯誤詳情: {services}")
-        
-        if st.button("清除快取並重試"):
-            st.cache_resource.clear()
-            st.rerun()
-            
-        return
-    # Sidebar Actions that require services (only if services exist)
-    with st.sidebar:
-        if st.button("檢查雲端空間 & 檔案"):
-            try:
-                # 1. Check Quota
-                about = services.drive_service.about().get(fields="storageQuota, user").execute()
-                quota = about['storageQuota']
-                limit = int(quota.get('limit', 0))
-                usage = int(quota.get('usage', 0))
-                trash = int(quota.get('usageInDriveTrash', 0))
-                
-                st.write(f"帳號: {about['user']['emailAddress']}")
-                st.write(f"--- 配額資訊 ---")
-                st.write(f"總容量限制: {limit} bytes ({limit / (1024**3):.4f} GB)")
-                st.write(f"已使用: {usage} bytes ({usage / (1024**3):.4f} GB)")
-                st.write(f"垃圾桶佔用: {trash} bytes")
-                
-                # 2. Check File Count
-                st.write(f"--- 檔案列表 (前 20 筆) ---")
-                results = services.drive_service.files().list(
-                    q="'me' in owners and trashed = false",
-                    pageSize=20,
-                    fields="files(id, name, size, createdTime)"
-                ).execute()
-                files = results.get('files', [])
-                
-                if not files:
-                    st.info("查無檔案")
-                else:
-                    for f in files:
-                        f_size = f.get('size', '0')
-                        st.text(f"[{f['createdTime']}] {f['name']} ({f_size} bytes)")
-                        
-                if trash > 0:
-                     if st.button("清空垃圾桶"):
-                        services.drive_service.files().emptyTrash().execute()
-                        st.success("垃圾桶已清空！")
-                        st.rerun()
-            except Exception as e:
-                st.error(f"查詢失敗: {e}")
-    # Session state initialization
-    if 'step' not in st.session_state:
-        st.session_state.step = 1
-    if 'case_id' not in st.session_state:
-        st.session_state.case_id = None
-    if 'email' not in st.session_state:
-        st.session_state.email = ""
-    # Step 1: Email Verification
-    if st.session_state.step == 1:
-        st.header("Step 1: 身份驗證")
-        email_input = st.text_input("請輸入您的 Email", value=st.session_state.email)
-        
-        if st.button("查詢案件編號"):
-            if not email_input:
-                st.warning("請輸入 Email")
+            mode = st.radio("請選擇功能", ["建檔 (New Registration)", "登入 (Login)"])
+            if "建檔" in mode:
+                st.session_state['auth_mode'] = 'register'
             else:
-                with st.spinner("查詢中..."):
-                    case_id = services.get_case_id_by_email(email_input)
-                    if case_id:
-                        st.session_state.case_id = case_id
-                        st.session_state.email = email_input
-                        st.session_state.step = 2
-                        st.success(f"找到案件編號: {case_id}")
-                        st.rerun()
-                    else:
-                        st.error("找不到此 Email 對應的案件編號，請確認 Email 是否正確或聯繫管理員。")
-    # Step 2: Ad Information Form
-    elif st.session_state.step == 2:
-        st.header(f"Step 2: 填寫上刊資訊 (案件: {st.session_state.case_id})")
+                st.session_state['auth_mode'] = 'login'
+
+    # Main Area Logic
+    if not st.session_state['user_data']:
+        if st.session_state['auth_mode'] == 'register':
+            handle_register()
+        else:
+            handle_login()
+    else:
+        # User is logged in
+        user = st.session_state['user_data']
         
-        with st.form("ad_submission_form"):
-            col1, col2 = st.columns(2)
+        # Check status to determine view
+        # We check keys for Stage 1 completion
+        if user.get("Status") == "Stage1_Done" or user.get("Status") == "Stage2_Done" or user.get("case_id"):
+             # Existing user with Case ID means Stage 1 is largely done
+             handle_stage2_flow(user)
+        else:
+             # Fresh user
+             handle_stage1_flow(user)
+
+def handle_register():
+    st.subheader("🆕 客戶建檔")
+    with st.form("register_form"):
+        name = st.text_input("客戶名稱 (Client Name)")
+        email = st.text_input("聯絡信箱 (Google Email)")
+        submitted = st.form_submit_button("開始建檔")
+        
+        if submitted:
+            if not name or not email:
+                st.error("請填寫所有欄位")
+            elif "gmail.com" not in email.lower() and "google" not in email.lower():
+                st.error("必須使用 Google 信箱 (Gmail) 才能使用此服務。")
+                return
             
-            with col1:
-                # fill_time removed as per request (auto-generated on submit)
-                ad_name_id = st.text_input("廣告名稱/編號 (必填)")
-                image_name_id = st.text_input("對應圖片名稱/編號 (必填)")
-                headline = st.text_input("廣告標題")
+            # Check if user already exists?
+            sheet = get_sheet_service()
+            existing = sheet.get_user_by_email(email)
+            if existing:
+                st.error("此信箱已註冊，請直接登入。")
+            else:
+                # Set session state as "New User"
+                st.session_state['user_data'] = {
+                    "party_a": name,
+                    "Email": email,
+                    "Status": "New"
+                }
+                st.rerun()
+
+def handle_login():
+    st.subheader("🔑 客戶登入")
+    with st.form("login_form"):
+        email = st.text_input("聯絡信箱 (Google Email)")
+        password = st.text_input("密碼", type="password")
+        submitted = st.form_submit_button("登入")
+        
+        if submitted:
+            if password != "dennis":
+                st.error("密碼錯誤")
+                return
             
-            with col2:
-                image_url = st.text_input("對應圖片雲端網址")
-                landing_url = st.text_input("廣告到達網址")
-                main_copy = st.text_area("廣告主文案", height=150)
-            submitted = st.form_submit_button("送出並建立文件")
+            sheet = get_sheet_service()
+            user = sheet.get_user_by_email(email)
             
-            if submitted:
-                if not ad_name_id or not image_name_id:
-                    st.error("請填寫 '廣告名稱/編號' 與 '對應圖片名稱/編號'")
-                else:
-                    try:
-                        with st.spinner("處理中...建立/更新文件中..."):
-                            # 1. Ensure Doc Exists and Share
-                            doc_id = services.ensure_doc_exists_and_share(st.session_state.case_id, st.session_state.email)
-                            
-                            # 2. Prepare Data
-                            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            ad_data = {
-                                'fill_time': current_time,
-                                'ad_name_id': ad_name_id,
-                                'image_name_id': image_name_id,
-                                'image_url': image_url,
-                                'headline': headline,
-                                'main_copy': main_copy,
-                                'landing_url': landing_url
-                            }
-                            
-                            # 3. Append Logic
-                            block_name = services.append_ad_data_to_doc(doc_id, ad_data)
-                            
-                        st.success(f"成功! 資料已寫入文件。")
-                        st.info(f"產生的廣告組合名稱: {block_name}")
-                        st.info(f"文件 ID: {doc_id} (已分享給您)")
-                        
-                        # 4. Send Email Notification
-                        doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
-                        admin_email = "rhk9903@gmail.com"
-                        
-                        try:
-                            st.info("📨 正在寄送確認信...")
-                            services.send_confirmation_email(st.session_state.email, ad_data, doc_url)
-                            if st.session_state.email != admin_email:
-                                services.send_confirmation_email(admin_email, ad_data, doc_url)
-                            st.success(f"✅ 確認信已寄出！")
-                        except Exception as e:
-                            st.error(f"信件寄送失敗，但資料已存檔。錯誤: {e}")
-                        
-                        # Button removed to fix st.form error
-                        st.info("您可以直接修改上方內容並再次送出。")
-                            
-                    except Exception as e:
-                        st.error(f"發生錯誤: {e}")
-        if st.button("回上一步 (重新查詢)"):
-            st.session_state.step = 1
-            st.session_state.case_id = None
+            if user:
+                st.session_state['user_data'] = user
+                st.success("登入成功！")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("找不到此信箱的資料，請先建檔。")
+
+def handle_stage1_flow(user):
+    # Render Stage 1 View
+    # returns data if submitted
+    results = render_stage1(user.get('party_a'), user.get('Email'))
+    
+    if results:
+        # Saving Logic
+        status_msg = st.empty()
+        status_msg.info("正在儲存資料...")
+        
+        # Merge results into user data
+        user.update(results)
+        
+        # Save to Google Sheet
+        sheet = get_sheet_service()
+        success = sheet.create_or_update_user(user)
+        
+        if success:
+            send_update_notification(user.get('party_a'), "第一階段｜合約", f"案件號：{user.get('case_id')}")
+            status_msg.success("資料已儲存！已通知服務方。")
+            # Update session state status
+            st.session_state['user_data'] = user
+            time.sleep(2)
             st.rerun()
+        else:
+            status_msg.error("儲存失敗，請檢查網路或聯絡管理員。")
+
+def handle_stage2_flow(user):
+    # Render Stage 2 View
+    updates = render_stage2(user)
+    
+    if updates:
+        # Saving Logic
+        status_msg = st.empty()
+        status_msg.info("正在更新資料...")
+        
+        user.update(updates)
+        
+        sheet = get_sheet_service()
+        success = sheet.create_or_update_user(user)
+        
+        if success:
+            send_update_notification(user.get('party_a'), "第二階段｜啟動前確認", f"更新欄位：{list(updates.keys())}")
+            status_msg.success("更新成功！")
+            st.session_state['user_data'] = user
+            time.sleep(1)
+            st.rerun()
+        else:
+            status_msg.error("更新失敗。")
+
 if __name__ == "__main__":
     main()
